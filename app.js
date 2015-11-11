@@ -122,7 +122,14 @@ process.stdin.on( 'readable', function() {
     prompt_ready = true;
     twitter.pause();
   } else {
-    console.log( process.stdin.read() );
+    var cmd = process.stdin.read().split(' ');
+
+    if ( cmd[0] == '/like' ) {
+      twitter.like( cmd[1], function( tweet ) {
+        console.log( "operation was probably successful maybe" );
+      } );
+    }
+
     prompt_ready = false;
     twitter.resume();
   }

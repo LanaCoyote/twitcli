@@ -42,7 +42,17 @@ function getTweet( id, cb ) {
   });
 }
 
+function likeTweet( id, cb ) {
+  console.log( id, typeof id );
+  twit_client.post( '/favorites/create.json', {id:id.trim(), include_entities:false},
+    function( err, tweet ) {
+    if ( err ) return console.error( err );
+    cb( tweet );
+  });
+}
+
 module.exports.pause = pauseStream;
 module.exports.resume = resumeStream;
 module.exports.attach = attachStream;
 module.exports.get = getTweet;
+module.exports.like = likeTweet;
