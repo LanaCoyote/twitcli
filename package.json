@@ -1,0 +1,15 @@
+{
+  "name": "twitcli",
+  "version": "1.0.0",
+  "description": "Simple streaming Twitter CLI",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "twitter",
+    "cli"
+  ],
+  "author": "David Reeve",
+  "license": "MIT"
+}
