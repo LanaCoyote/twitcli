@@ -11,5 +11,8 @@
     "cli"
   ],
   "author": "David Reeve",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "twitter": "^1.2.5"
+  }
 }
