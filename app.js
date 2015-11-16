@@ -128,6 +128,12 @@ function handleTweet( tweet ) {
   if ( scrollbackBuffer ) scrollbackBuffer.chain( sbel );
   else scrollbackBuffer = sbel;
 
+  // clear our buffer eventually
+  if ( scrollbackBuffer.length > 50 ) {
+    scrollbackBuffer = scrollbackBuffer.next;
+    scrollbackBuffer.previous = null;
+  }
+
   redrawScreen();
 }
 
@@ -165,7 +171,11 @@ process.stdin.on( 'keypress', function( ch, key ) {
   } else if ( key.name === 'return' ) {
     if (sline) {
       if (sline.isTweet) {
-        readBuffer += " " + sline.lead.split(' ')[0];
+        if ( readBuffer.length ) readBuffer += " " + sline.lead.split(' ')[0];
+        else {
+          readBuffer = "/ " + sline.lead.split(' ')[0];
+          insertOffset = readBuffer.length-1;
+        }
       }
       sline.selected = false;
       sline = null;

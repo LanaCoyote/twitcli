@@ -4,7 +4,8 @@ function wordWrapText( text, maxlen ) {
   if ( !maxlen ) maxlen = 80;
 
   var lines = [],
-      words = text.split(' ');
+      words = text.split(' '),
+      forceendnext = false;
 
   while( words.length ) {
     var nextline = [];
@@ -22,6 +23,7 @@ function wordWrapText( text, maxlen ) {
         var nlsplit = nextword.split('\n');
         words = nlsplit.concat( words );  // return the rest of the word to the queue
         nextword = words.shift();
+        forceendnext = true;
       }
 
       // check if the next line will overflow us
@@ -30,6 +32,11 @@ function wordWrapText( text, maxlen ) {
         break;
       } else {
         nextline.push( nextword );
+      }
+
+      if ( forceendnext ) {
+        forceendnext = false;
+        break;
       }
     }
 
@@ -43,6 +50,7 @@ function ScrollbackElement( lead, head, content, maxlen ) {
   this.lead = lead;
   this.head = head;
   this.content = content;
+  this.length = 1;
   
   this.maxlen = maxlen;
   this.selected = false;
@@ -76,10 +84,15 @@ ScrollbackElement.prototype.last = function() {
 }
 
 ScrollbackElement.prototype.chain = function( element ) {
-  var end = this.last();
+  this.length++;
 
-  end.next = element;
-  element.previous = end;
+  if ( this.next ) {
+    this.next.chain( element );
+  } else {
+    this.next = element;
+    element.previous = this;
+  }
+
   return element;
 }
 
