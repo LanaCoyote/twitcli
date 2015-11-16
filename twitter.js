@@ -37,18 +37,27 @@ function resumeStream() {
 
 function getTweet( id, cb ) {
   twit_client.get( '/statuses/show/' + id + '.json', {include_entities: true}, function( err, tweet ) {
-    if ( err ) return console.error( err );
-    cb( tweet );
+    cb( err, tweet );
+  });
+}
+
+function updateTweet( text, cb ) {
+  twit_client.post( '/statuses/update.json', {status:text}, function( err, tweet ) {
+    cb( err, tweet );
   });
 }
 
 function likeTweet( id, cb ) {
-  console.log( id, typeof id );
   twit_client.post( '/favorites/create.json', {id:id.trim(), include_entities:false},
     function( err, tweet ) {
-    if ( err ) return console.error( err );
-    cb( tweet );
+    cb( err, tweet );
   });
+}
+
+function retweetTweet( id, cb ) {
+  twit_client.post( '/statuses/retweet/' + id + '.json', {include_entities:false}, function( err, tweet ) {
+    cb( err, tweet );
+  } );
 }
 
 module.exports.pause = pauseStream;
@@ -56,3 +65,5 @@ module.exports.resume = resumeStream;
 module.exports.attach = attachStream;
 module.exports.get = getTweet;
 module.exports.like = likeTweet;
+module.exports.update = updateTweet;
+module.exports.retweet = retweetTweet;

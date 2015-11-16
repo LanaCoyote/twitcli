@@ -1,67 +1,94 @@
 var chalk = require('chalk');
+var clui = require('clui');
+var clicolor = require('cli-color');
+var commands = require('./commands');
 var twitter = require('./twitter');
+var keypress = require('keypress');
+
+var buffer = require('./buffer');
 var log = require('./util/log');
 
 var logger = new log();
 
+function padZero( time ) {
+  if ( time < 10 ) return '0' + time;
+  else return time;
+}
+
 function getTimestamp( tweet ) {
-  var ts = tweet.created_at.split(' ');
-  return ts[3];
+  var created = new Date( tweet.created_at );
+  return created.getHours() + ':' + padZero( created.getMinutes() ) + ':' + padZero( created.getSeconds() );
+
 }
 
 function getByline( tweet ) {
-  return chalk.blue( '@' + tweet.user.screen_name );
+  return chalk.blue( '@' + tweet.user.screen_name ) + ' ' + tweet.user.name;
 }
 
-function getText( tweet, maxlen ) {
-  // if we're not given a max length, we'll do 80
-  if ( !maxlen ) maxlen = 80;
+function getRetweetByline( rt_status, tweet ) {
+  return chalk.blue( '@' + tweet.user.screen_name) + ' RT ' + getByline( rt_status );
+}
 
-  var lines = [];
-  var words = tweet.text.split( ' ' );
+function headerLine( text ) {
+  var line = ' ' + text;
+  while ( line.length < process.stdout.columns ) line += ' ';
+  return line;
+}
+
+var scrollbackBuffer = null;
+var readBuffer = '';
+function redrawScreen() {
   
-  // continue to operate until we've run out of words
-  while( words.length ) {
-    // start a new line
-    lines[lines.length] = [];
+  var screen = new clui.LineBuffer( {x:0,y:0,width:'console',height:1} );
+  var header = new clui.Line( screen ).
+        column( headerLine(' TwitCLI - ' + new Date()), 'console', [clicolor.bgBlueBright] ).fill().store();
 
-    // the infinite loop looks like a crying face
-    for (; ;) {
-      // if we're used up every word we'll end the line
-      if ( words.length === 0 ) break;
+  var subscreen = new clui.LineBuffer( {x:0,y:1,width:'console',height:process.stdout.rows-3,scroll:0} );
+  var infoline = new clui.LineBuffer( {x:0,y:process.stdout.rows-2,width:'console',height:1} );
+  new clui.Line( infoline ).column( headerLine( 'INFOLINE!!' ), 'console', [clicolor.bgBlueBright] ).fill().store();
 
-      // pull the next word off the queue
-      var nextword = words.shift();
+  var curbuffer = scrollbackBuffer;
+  while( curbuffer !== null ) {
+    if ( curbuffer.isTweet ) {
+      new clui.Line( subscreen ).
+            column( curbuffer.header() ).
+            fill().store();
 
-      // if there's a line break, we'll break the line
-      if( nextword.indexOf('\n') > -1 ) {
-        // take everything after the line break and push it back to the front
-        // of the queue
-        var nlstart = nextword.slice( nextword.indexOf('\n') + 1 );
-        words.unshift( nlstart );
-
-        // add the rest of the line and then break
-        lines[lines.length-1] += " " + nextword.slice( 0, nextword.indexOf('\n') );
-        break;
-      }
-
-      // check to see if the next word will overflow us
-      if ( (lines[lines.length-1] + " " + nextword).length > maxlen ) {
-        // return the word to the queue and break
-        words.unshift( nextword );
-        break;
-      } else {
-        // add the word to the line
-        lines[lines.length-1] += " " + nextword;
-      }
+      curbuffer.textArray().forEach( function( line ) {
+        new clui.Line( subscreen ).
+          column( line ).fill().store();
+      } );
+    } else {
+      new clui.Line( subscreen ).column( curbuffer.header() ).fill().store();
     }
+
+    var scrolldist = Math.max( 0, subscreen.lines.length - (process.stdout.rows - 3) );
+    subscreen.userOptions.scroll = scrolldist;
+    curbuffer = curbuffer.next;
   }
 
-  return lines;
+  process.stdout.write( clicolor.reset );
+  subscreen.output();
+  screen.output();
+  infoline.output();
+  printFooter();
 }
 
-function getRetweetByline( rt_status ) {
-  return ' RT ' + getByline( rt_status );
+function printFooter() {
+  var username = "@LanceCoyote";
+  var readlen = readBuffer[0] === '/' ? readBuffer.split(' ').slice(1).join(' ').length : readBuffer.length;
+  while ( readlen.toString().length < 3 ) {
+    readlen = ' ' + readlen;
+  }
+  var nameblock = '[' + chalk.blue(username) + ' ' + readlen + '] ';
+
+  var spaceleft = process.stdout.columns - nameblock.length + 9;
+  var shift = Math.max( 0, insertOffset - spaceleft );
+  spaceleft += shift;
+  var visbuffer = shift-1 > 0 ? readBuffer.slice( -spaceleft, -(shift-1) ) : readBuffer.slice( -spaceleft );
+
+  process.stdout.write( nameblock + visbuffer );
+  process.stdout.write( clicolor.move.left( insertOffset - Math.max(0,shift-1) ) );
 }
 
 //twitter.attach( function( tweet ) {
@@ -69,72 +96,118 @@ function handleTweet( tweet ) {
   if ( !tweet.user ) return;
   var head = tweet.id_str + " " + getTimestamp( tweet );
   var byline = getByline( tweet );
-  var text = getText( tweet, process.stdout.columns - 5 );
+  var text = tweet.text;
 
   // add retweets to the byline
   if ( tweet.retweeted_status ) {
-    byline += getRetweetByline( tweet.retweeted_status );
-    text = getText( tweet.retweeted_status, process.stdout.columns - 5 );
+    byline = getRetweetByline( tweet.retweeted_status, tweet );
+    text = tweet.retweeted_status.text;
   }
-
-  // print our tweet header
-  logger.print( chalk.inverse( head ), byline, ':' );
 
   // if there's a replied tweet, we'll show it in context
   if ( tweet.in_reply_to_status_id_str ) {
-    twitter.get( tweet.in_reply_to_status_id_str, function( reply ) {
+    twitter.get( tweet.in_reply_to_status_id_str, function( err, reply ) {
+      if ( err ) return console.log( err );
+
       var repl_head = "Reply> " + reply.id_str + " " + getTimestamp( reply );
       var repl_byline = getByline( reply );
-      var repl_text = getText( reply, process.stdout.columns - 11 );
+      var repl_text = reply.text;
 
       // get reply retweet info
       if ( reply.retweeted_status ) {
-        repl_byline += getRetweetByline( reply.retweeted_status );
-        repl_text += getText( reply.retweeted_status, process.stdout.columns - 11 );
+        repl_byline = getRetweetByline( reply.retweeted_status, reply );
+        repl_text = reply.retweeted_status.text;
       }
 
-      // print the reply header and content
-      logger.print( chalk.inverse( repl_head ), repl_byline, ':' );
-      repl_text.forEach( function( line ) {
-        logger.print( chalk.inverse( "     > " ), '  ', line );
-      } );
+      text = chalk.inverse( repl_head ) + ' ' + repl_byline + '\n' + repl_text + '\n' + text;
+    } );
+  } 
 
-      // dump the rest of our text
-      text.forEach( function( line ) {
-        logger.print( '  ', line );
-      } );
-    } );
-  } else {
-    // dump all our text
-    text.forEach( function( line ) {
-      logger.print( '  ', line );
-    } );
-  }
-//} );
+  var sbel = new buffer.ScrollbackElement( head, byline + ':', text, process.stdout.columns );
+  sbel.isTweet = true;
+  if ( scrollbackBuffer ) scrollbackBuffer.chain( sbel );
+  else scrollbackBuffer = sbel;
+
+  redrawScreen();
 }
 
+var sline = null;
+var insertOffset = 0;
+keypress( process.stdin );
 process.stdin.setEncoding( 'utf8' );
-var prompt_ready = false;
-process.stdin.on( 'readable', function() {
-  if ( !prompt_ready ) {
-    var temp = process.stdin.read();
-    process.stdout.write( chalk.inverse("Enter Command:") );
-    prompt_ready = true;
-    twitter.pause();
-  } else {
-    var cmd = process.stdin.read().split(' ');
-
-    if ( cmd[0] == '/like' ) {
-      twitter.like( cmd[1], function( tweet ) {
-        console.log( "operation was probably successful maybe" );
-      } );
+process.stdin.setRawMode( true );
+process.stdin.resume();
+process.stdin.on( 'keypress', function( ch, key ) {
+  if ( key === undefined ) {
+    readBuffer += ch;
+  } else if ( key.name === 'c' && key.ctrl ) {
+    process.exit(0);
+  } else if ( key.name === 'backspace' ) {
+    readBuffer = readBuffer.slice( 0, readBuffer.length - 1 );
+  } else if ( key.name === 'space' ) {
+    readBuffer += ' ';
+  } else if ( key.name === 'up' ) {
+    if (sline) {
+      sline.selected = false;
+      sline = sline.previous;
+    } else sline = scrollbackBuffer.last();
+    if (sline) sline.selected = true;
+  } else if ( key.name === 'down' ) {
+    if (sline) {
+      sline.selected = false;
+      sline = sline.next;
+      if (sline) sline.selected = true;
     }
-
-    prompt_ready = false;
-    twitter.resume();
+  } else if ( key.name === 'left' ) {
+    insertOffset = Math.min( readBuffer.length, insertOffset + 1 );
+  } else if ( key.name === 'right' ) {
+    insertOffset = Math.max( 0, insertOffset - 1 );
+  } else if ( key.name === 'return' ) {
+    if (sline) {
+      if (sline.isTweet) {
+        readBuffer += " " + sline.lead.split(' ')[0];
+      }
+      sline.selected = false;
+      sline = null;
+    } else {
+      var cmd = readBuffer.trim().split(' ');
+      if ( readBuffer[0] === '/' ) {
+        cmd[0] = cmd[0].slice( 1 );
+        if ( commands[ cmd[0] ] ) {
+          commands[ cmd[0] ]( cmd[0], cmd.slice(1), scrollbackBuffer );
+        } else {
+          var sbe = new buffer.ScrollbackElement( 
+            "ERROR:", "Command not found \"" + cmd[0] + "\"", null, process.stdout.columns );
+          scrollbackBuffer ? scrollbackBuffer.chain( sbe ) : scrollbackBuffer = sbe;
+        }
+      } else {
+        if ( readBuffer.length ) commands['tweet']( 'tweet', cmd, scrollbackBuffer );
+      }
+      readBuffer = '';
+      insertOffset = 0;
+    }
+  } else {
+    var k = key.shift ? key.name.toUpperCase() : key.name;
+    //readBuffer += k;
+    var cutpoint = readBuffer.length - insertOffset;
+    readBuffer = readBuffer.slice( 0, cutpoint ) + k + readBuffer.slice( cutpoint );
   }
+  redrawScreen();
+
+    //var cmd = process.stdin.read().trim().split(' ');
+
+    //if ( cmd[0][0] === '/' ) {
+      //cmd[0] = cmd[0].slice( 1 );
+      //if ( commands[ cmd[0] ] ) {
+        //commands[ cmd[0] ]( cmd[0], cmd.slice(1) );
+      //}
+    //}
+//
+    //prompt_ready = false;
+    //twitter.resume();
 } );
 
 
 twitter.attach( handleTweet );
+redrawScreen();
 
